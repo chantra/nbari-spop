@@ -1,5 +1,6 @@
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
+use log::{debug, error, info};
 use semver::Version;
 use spop::{
     SpopCodec, SpopFrame,
@@ -12,12 +13,13 @@ use tokio_util::codec::Framed;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let listener = TcpListener::bind("0.0.0.0:12345").await?;
-    println!("SPOE Agent listening on port 12345...");
+    env_logger::init();
+    let listener = TcpListener::bind("0.0.0.0:8083").await?;
+    info!("SPOE Agent listening on port 8083...");
 
     loop {
         let (stream, addr) = listener.accept().await?;
-        println!("New connection from {}", addr);
+        info!("New connection from {}", addr);
         tokio::spawn(handle_connection(stream));
     }
 }
@@ -29,7 +31,7 @@ async fn handle_connection(u_stream: TcpStream) -> Result<()> {
         let frame = match result {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("Frame read error: {:?}", e);
+                error!("Frame read error: {:?}", e);
                 break;
             }
         };
@@ -55,18 +57,18 @@ async fn handle_connection(u_stream: TcpStream) -> Result<()> {
                     capabilities: vec![FrameCapabilities::Pipelining],
                 };
 
-                println!("Sending AgentHello: {:#?}", agent_hello.payload());
+                debug!("Sending AgentHello: {:#?}", agent_hello.payload());
 
                 match socket.send(Box::new(agent_hello)).await {
-                    Ok(_) => println!("Frame sent successfully"),
-                    Err(e) => eprintln!("Failed to send frame: {:?}", e),
+                    Ok(_) => debug!("Frame sent successfully"),
+                    Err(e) => error!("Failed to send frame: {:?}", e),
                 }
 
                 // If "healthcheck" item was set to TRUE in the HAPROXY-HELLO frame, the
                 // agent can safely close the connection without DISCONNECT frame. In all
                 // cases, HAProxy will close the connection at the end of the health check.
                 if is_healthcheck {
-                    println!("Handled healthcheck. Closing socket.");
+                    info!("Handled healthcheck. Closing socket.");
                     return Ok(());
                 }
             }
@@ -78,7 +80,7 @@ async fn handle_connection(u_stream: TcpStream) -> Result<()> {
                     message: "Goodbye".to_string(),
                 };
 
-                println!("Sending AgentDisconnect: {:#?}", agent_disconnect.payload());
+                debug!("Sending AgentDisconnect: {:#?}", agent_disconnect.payload());
 
                 socket.send(Box::new(agent_disconnect)).await?;
                 socket.close().await?;
@@ -103,25 +105,28 @@ async fn handle_connection(u_stream: TcpStream) -> Result<()> {
                                 ack = ack.set_var(VarScope::Transaction, "my_var", "tequila");
                             }
 
+                            "test_msg" => {
+                                ack = ack.set_var(VarScope::Transaction, "test_var", "test_value");
+                            }
                             _ => {
-                                eprintln!("Unsupported message: {:?}", message.name);
+                                error!("Unsupported message: {:?}", message.name);
                             }
                         }
                     }
 
                     // Create the response frame
-                    println!("Sending Ack: {:#?}", ack.payload());
+                    debug!("Sending Ack: {:#?}", ack.payload());
                     socket.send(Box::new(ack)).await?;
                 }
             }
 
             _ => {
-                eprintln!("Unsupported frame type: {:?}", frame.frame_type());
+                error!("Unsupported frame type: {:?}", frame.frame_type());
             }
         }
     }
 
-    println!("Socket closed by peer");
+    info!("Socket closed by peer");
 
     Ok(())
 }
